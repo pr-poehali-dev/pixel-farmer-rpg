@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { generateWorld, WORLD_W, SEA_LEVEL } from '@/engine/worldgen';
 import { Tile, TILE_SIZE, TILE_DEFS } from '@/engine/tiles';
-import { createPlayer, updatePlayer, gainExp as doGainExp, Player } from '@/engine/player';
+import { createPlayer, updatePlayer, gainExp as doGainExp, restoreStamina, Player } from '@/engine/player';
 import { Enemy, spawnEnemy, updateEnemies, hitEnemy } from '@/engine/enemies';
 import { Particle, spawnParticles, updateParticles } from '@/engine/particles';
 import { renderWorld } from '@/engine/renderer';
@@ -34,6 +34,7 @@ export default function Game() {
     jumpPressed: boolean;
     attackPressed: boolean;
     placePressed: boolean;
+    heavyPressed: boolean;
     frameId: number;
     time: number;
     notification: { text: string; timer: number } | null;
@@ -41,6 +42,8 @@ export default function Game() {
   } | null>(null);
   const [ready, setReady] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
+  const [showSleep, setShowSleep] = useState(false);
+  const [showSleepScreen, setShowSleepScreen] = useState(false);
 
   const showNotif = useCallback((text: string) => {
     setNotification(text);
@@ -83,6 +86,7 @@ export default function Game() {
       jumpPressed: false,
       attackPressed: false,
       placePressed: false,
+      heavyPressed: false,
       frameId: 0,
       time: 0,
       notification: null,
@@ -113,6 +117,13 @@ export default function Game() {
       if (e.key >= '1' && e.key <= '5') {
         const slots = ['pickaxe', 'sword', 'torch', 'dirt', 'stone'];
         s.selectedSlot = slots[parseInt(e.key) - 1];
+      }
+      if (e.key === 'e' || e.key === 'E') {
+        if (s.player.stamina < s.player.maxStamina) {
+          restoreStamina(s.player);
+          setShowSleep(false);
+          setShowSleepScreen(true);
+        }
       }
       if (e.key === ' ') e.preventDefault();
     };
@@ -168,8 +179,9 @@ export default function Game() {
         }
 
         // Action buttons (right side)
-        const jx = sw - 55, jy = sh - 140;
-        const ax = sw - 90, ay = sh - 85;
+        const jx = sw - 55, jy = sh - 155;
+        const hx = sw - 110, hy = sh - 100;
+        const ax = sw - 90, ay = sh - 90;
         const px2 = sw - 50, py = sh - 55;
 
         const dist = (x1: number, y1: number, x2: number, y2: number) =>
@@ -178,6 +190,10 @@ export default function Game() {
         if (dist(tx, ty, jx, jy) < 32) {
           s.jumpPressed = true; s.keys.add(' ');
           s.actionTouchIds.set('jump', t.identifier);
+        } else if (dist(tx, ty, hx, hy) < 32) {
+          s.heavyPressed = true;
+          s.actionTouchIds.set('heavy', t.identifier);
+          doHeavyAttack();
         } else if (dist(tx, ty, ax, ay) < 32) {
           s.attackPressed = true;
           s.actionTouchIds.set('attack', t.identifier);
@@ -220,8 +236,9 @@ export default function Game() {
         for (const [action, id] of s.actionTouchIds.entries()) {
           if (id === t.identifier) {
             s.actionTouchIds.delete(action);
-            if (action === 'jump') { s.jumpPressed = false; s.keys.delete(' '); }
+            if (action === 'jump')  { s.jumpPressed = false; s.keys.delete(' '); }
             if (action === 'attack') s.attackPressed = false;
+            if (action === 'heavy')  s.heavyPressed = false;
             if (action === 'place')  s.placePressed  = false;
           }
         }
@@ -247,7 +264,10 @@ export default function Game() {
 
     const doAttack = () => {
       const { player, enemies, particles } = s;
-      const reach = 60;
+      if (player.attackCooldown > 0) return;
+      player.attackAnim = 180;
+      player.attackCooldown = 25;
+      const reach = 65;
       let hit = false;
       for (const e of enemies) {
         if (!e.alive) continue;
@@ -268,9 +288,51 @@ export default function Game() {
       }
       if (!hit) {
         spawnParticles(particles,
-          player.x + (player.facingRight ? player.w + 10 : -10),
+          player.x + (player.facingRight ? player.w + 15 : -15),
           player.y + player.h / 2,
-          '#ffffff', 4, 2, 3,
+          '#ffffff', 5, 2, 3,
+        );
+      }
+      s.enemies = s.enemies.filter(e => e.alive || e.hitTimer > 0);
+    };
+
+    const doHeavyAttack = () => {
+      const { player, enemies, particles } = s;
+      if (player.attackCooldown > 0) return;
+      if (player.stamina < 20) {
+        setShowSleep(true);
+        showNotif('⚡ Нет энергии! Поспи чтобы восстановить!');
+        return;
+      }
+      player.stamina = Math.max(0, player.stamina - 20);
+      player.heavyAttackAnim = 250;
+      player.attackCooldown = 50;
+      setShowSleep(player.stamina < 20);
+      const reach = 90;
+      let hitCount = 0;
+      for (const e of enemies) {
+        if (!e.alive) continue;
+        const dx = (e.x + e.w / 2) - (player.x + player.w / 2);
+        const dy = (e.y + e.h / 2) - (player.y + player.h / 2);
+        if (Math.sqrt(dx * dx + dy * dy) < reach + e.w) {
+          const dmg = Math.floor((30 + player.level * 6) * 1.8);
+          hitEnemy(e, dmg);
+          spawnParticles(particles, e.x + e.w / 2, e.y + e.h / 2, '#ff6f00', 14, 5);
+          spawnParticles(particles, e.x + e.w / 2, e.y + e.h / 2, '#ffd600', 8, 3, 6);
+          hitCount++;
+          if (!e.alive) {
+            const lvledUp = doGainExp(player, e.expReward);
+            spawnParticles(particles, e.x + e.w / 2, e.y + e.h / 2, '#ffd600', 16, 6, 7);
+            if (lvledUp) showNotif(`🎉 Уровень ${player.level}!`);
+            else showNotif(`+${e.expReward} EXP`);
+          }
+        }
+      }
+      if (hitCount === 0) {
+        spawnParticles(particles,
+          player.x + (player.facingRight ? player.w + 20 : -20),
+          player.y + player.h / 3,
+          '#ff8f00', 8, 3, 4,
         );
       }
       s.enemies = s.enemies.filter(e => e.alive || e.hitTimer > 0);
@@ -338,11 +400,15 @@ export default function Game() {
 
       // Enemy spawn
       s.enemySpawnTimer++;
-      if (s.enemySpawnTimer > 600 && s.enemies.filter(e => e.alive).length < 12) {
+      if (s.enemySpawnTimer > 500 && s.enemies.filter(e => e.alive).length < 15) {
         s.enemySpawnTimer = 0;
         const side = Math.random() > 0.5 ? 1 : -1;
         const ex = s.player.x + side * (sw * 0.6 + Math.random() * 200);
-        const et = ['slime', 'zombie', 'skeleton'][Math.floor(Math.random() * 3)] as 'slime' | 'zombie' | 'skeleton';
+        const allTypes: Array<'slime' | 'zombie' | 'skeleton' | 'goblin' | 'troll' | 'bat'> =
+          ['slime', 'zombie', 'skeleton', 'goblin', 'troll', 'bat'];
+        const weights = [25, 20, 18, 18, 8, 11]; // вероятности
+        const rnd = Math.random() * 100; let cumul = 0, et = allTypes[0];
+        for (let i = 0; i < allTypes.length; i++) { cumul += weights[i]; if (rnd < cumul) { et = allTypes[i]; break; } }
         s.enemies.push(spawnEnemy(et, Math.max(0, Math.min((WORLD_W - 2) * TILE_SIZE, ex)), s.player.y - 100));
         s.enemies = s.enemies.filter(e => e.alive);
       }
@@ -352,6 +418,7 @@ export default function Game() {
       const camY = Math.max(0, Math.min(128 * TILE_SIZE - sh, s.player.y - sh / 2 + s.player.h / 2));
 
       // Render
+      const lowStamina = s.player.stamina < 20;
       renderWorld(
         ctx, s.world, camX, camY, sw, sh,
         s.player, s.enemies, s.particles,
@@ -359,11 +426,13 @@ export default function Game() {
         s.player.hp, s.player.maxHp,
         s.player.mana, s.player.maxMana,
         s.player.level, s.player.exp, s.player.expNext,
+        s.player.stamina, s.player.maxStamina,
+        lowStamina,
       );
 
       // Draw controls overlay
       drawJoystick(ctx, s.joystick, sw, sh);
-      drawActionButtons(ctx, sw, sh, s.jumpPressed, s.attackPressed, s.placePressed);
+      drawActionButtons(ctx, sw, sh, s.jumpPressed, s.attackPressed, s.placePressed, s.heavyPressed, s.player.stamina);
 
       s.frameId = requestAnimationFrame(loop);
     };
@@ -383,6 +452,19 @@ export default function Game() {
     };
   }, [ready, showNotif]);
 
+  const handleSleep = useCallback(() => {
+    if (!stateRef.current) return;
+    restoreStamina(stateRef.current.player);
+    setShowSleep(false);
+    setShowSleepScreen(true);
+    setNotification('💤 Ты выспался! Энергия восстановлена!');
+    setTimeout(() => setNotification(null), 2200);
+  }, []);
+
+  const handleWakeUp = useCallback(() => {
+    setShowSleepScreen(false);
+  }, []);
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#0a0a2e', overflow: 'hidden' }}>
       {!ready && (
@@ -399,6 +481,94 @@ export default function Game() {
         ref={canvasRef}
         style={{ display: 'block', touchAction: 'none', imageRendering: 'pixelated' }}
       />
+
+      {/* Кнопка Спать (мобильная) */}
+      {showSleep && (
+        <button
+          onClick={handleSleep}
+          style={{
+            position: 'fixed', right: 16, top: '50%', transform: 'translateY(-50%)',
+            background: '#1565c0', border: '2px solid #ffd600',
+            color: '#fff', fontFamily: 'monospace', fontSize: 12,
+            padding: '10px 16px', cursor: 'pointer', zIndex: 200,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+          }}
+        >
+          <span style={{ fontSize: 20 }}>💤</span>
+          <span>СПАТЬ</span>
+        </button>
+      )}
+
+      {/* Экран сна */}
+      {showSleepScreen && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,20,0.97)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', zIndex: 300, gap: 20,
+          fontFamily: "'Press Start 2P', monospace",
+        }}>
+          <div style={{ fontSize: 48 }}>🛏️</div>
+          <div style={{ color: '#ffd600', fontSize: 14 }}>КОМНАТА СНА</div>
+          <div style={{ color: '#aaa', fontSize: 8, textAlign: 'center', maxWidth: 300 }}>
+            Ты отдыхаешь...<br/>Энергия восстановлена полностью!
+          </div>
+          {stateRef.current && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: 260, marginTop: 10 }}>
+              <div style={{ color: '#69f0ae', fontSize: 8, borderBottom: '1px solid #333', paddingBottom: 6 }}>
+                ПРОКАЧКА ПЕРСОНАЖА
+              </div>
+              {[
+                { label: '❤️ +20 HP', cost: 50, action: () => {
+                  const p = stateRef.current!.player;
+                  if (stateRef.current!.inventory['gold'] >= 1) {
+                    stateRef.current!.inventory['gold'] = (stateRef.current!.inventory['gold'] ?? 0) - 1;
+                    p.maxHp += 20; p.hp = Math.min(p.hp + 20, p.maxHp);
+                    showNotif('❤️ +20 максимум HP!');
+                  } else { showNotif('Нужно золото!'); }
+                }},
+                { label: '⚡ +20 Энергия', cost: 50, action: () => {
+                  const p = stateRef.current!.player;
+                  if (stateRef.current!.inventory['gold'] >= 1) {
+                    stateRef.current!.inventory['gold'] = (stateRef.current!.inventory['gold'] ?? 0) - 1;
+                    p.maxStamina += 20; p.stamina = p.maxStamina;
+                    setShowSleep(false);
+                    showNotif('⚡ +20 максимум энергии!');
+                  } else { showNotif('Нужно золото!'); }
+                }},
+                { label: '✦ +15 Мана', cost: 50, action: () => {
+                  const p = stateRef.current!.player;
+                  if (stateRef.current!.inventory['gold'] >= 1) {
+                    stateRef.current!.inventory['gold'] = (stateRef.current!.inventory['gold'] ?? 0) - 1;
+                    p.maxMana += 15; p.mana = Math.min(p.mana + 15, p.maxMana);
+                    showNotif('✦ +15 максимум маны!');
+                  } else { showNotif('Нужно золото!'); }
+                }},
+              ].map((u, i) => (
+                <button key={i} onClick={u.action} style={{
+                  background: '#0d47a1', border: '1px solid #42a5f5',
+                  color: '#fff', fontSize: 9, padding: '8px 12px',
+                  cursor: 'pointer', display: 'flex', justifyContent: 'space-between',
+                  fontFamily: 'monospace',
+                }}>
+                  <span>{u.label}</span>
+                  <span style={{ color: '#ffd600' }}>1 золото</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={handleWakeUp}
+            style={{
+              marginTop: 16, background: '#2e7d32', border: '2px solid #69f0ae',
+              color: '#fff', fontSize: 10, padding: '12px 32px',
+              cursor: 'pointer', fontFamily: 'monospace',
+            }}
+          >
+            ☀️ ПРОСНУТЬСЯ
+          </button>
+        </div>
+      )}
+
       {notification && (
         <div style={{
           position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)',

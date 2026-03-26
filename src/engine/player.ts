@@ -14,11 +14,16 @@ export interface Player {
   maxHp: number;
   mana: number;
   maxMana: number;
+  stamina: number;
+  maxStamina: number;
   level: number;
   exp: number;
   expNext: number;
   attackCooldown: number;
   manaRegen: number;
+  attackAnim: number;
+  heavyAttackAnim: number;
+  sleeping: boolean;
 }
 
 const GRAVITY = 0.45;
@@ -36,9 +41,13 @@ export function createPlayer(spawnX: number, spawnY: number): Player {
     facingRight: true,
     hp: 100, maxHp: 100,
     mana: 60, maxMana: 60,
+    stamina: 100, maxStamina: 100,
     level: 1, exp: 0, expNext: 100,
     attackCooldown: 0,
     manaRegen: 0,
+    attackAnim: 0,
+    heavyAttackAnim: 0,
+    sleeping: false,
   };
 }
 
@@ -83,6 +92,8 @@ export function updatePlayer(
 
   // Cooldowns
   if (p.attackCooldown > 0) p.attackCooldown -= dt;
+  if (p.attackAnim > 0) p.attackAnim -= dt;
+  if (p.heavyAttackAnim > 0) p.heavyAttackAnim -= dt;
 
   // Mana regen
   p.manaRegen += dt;
@@ -130,6 +141,11 @@ function resolveAxisY(p: Player, world: Uint8Array) {
       p.onGround = true;
     }
   }
+}
+
+export function restoreStamina(p: Player) {
+  p.stamina = p.maxStamina;
+  p.sleeping = false;
 }
 
 export function gainExp(p: Player, amount: number): boolean {

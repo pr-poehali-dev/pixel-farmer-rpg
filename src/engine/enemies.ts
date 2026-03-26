@@ -2,7 +2,7 @@ import { Tile, TILE_SIZE, isSolid } from './tiles';
 import { WORLD_W, WORLD_H } from './worldgen';
 import { Player } from './player';
 
-export type EnemyType = 'slime' | 'zombie' | 'skeleton';
+export type EnemyType = 'slime' | 'zombie' | 'skeleton' | 'goblin' | 'troll' | 'bat';
 
 export interface Enemy {
   id: number;
@@ -31,9 +31,12 @@ export interface Enemy {
 let nextId = 1;
 
 const ENEMY_DEFS: Record<EnemyType, Partial<Enemy>> = {
-  slime:    { w: 28, h: 20, hp: 25,  maxHp: 25,  damage: 5,  speed: 1.0, aggroRange: 160, attackRange: 30, expReward: 15 },
-  zombie:   { w: 20, h: 36, hp: 55,  maxHp: 55,  damage: 12, speed: 1.3, aggroRange: 200, attackRange: 28, expReward: 30 },
-  skeleton: { w: 20, h: 34, hp: 40,  maxHp: 40,  damage: 18, speed: 1.8, aggroRange: 240, attackRange: 34, expReward: 45 },
+  slime:    { w: 28, h: 22, hp: 60,   maxHp: 60,   damage: 6,  speed: 1.1, aggroRange: 160, attackRange: 32, expReward: 15 },
+  zombie:   { w: 22, h: 38, hp: 120,  maxHp: 120,  damage: 14, speed: 1.3, aggroRange: 200, attackRange: 30, expReward: 30 },
+  skeleton: { w: 20, h: 36, hp: 90,   maxHp: 90,   damage: 20, speed: 1.9, aggroRange: 240, attackRange: 36, expReward: 45 },
+  goblin:   { w: 18, h: 28, hp: 70,   maxHp: 70,   damage: 10, speed: 2.2, aggroRange: 220, attackRange: 26, expReward: 35 },
+  troll:    { w: 34, h: 46, hp: 250,  maxHp: 250,  damage: 25, speed: 0.8, aggroRange: 180, attackRange: 40, expReward: 80 },
+  bat:      { w: 20, h: 16, hp: 40,   maxHp: 40,   damage: 8,  speed: 2.0, aggroRange: 260, attackRange: 22, expReward: 25 },
 };
 
 const GRAVITY = 0.45;
